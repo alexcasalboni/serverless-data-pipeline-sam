@@ -258,7 +258,7 @@ Resources:
     DependsOn:
       - DeliveryBucket
     Properties:
-      Description: Run this query to initialize the Athena table
+      Description: Just a sample query to illustrate the data structure.
       QueryString: !Sub >
         SELECT name, action,
                count(*) as num,
