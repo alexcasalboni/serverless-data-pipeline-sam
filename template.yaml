@@ -1,0 +1,289 @@
+AWSTemplateFormatVersion : '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: Serverless Data Pipeline
+
+Parameters:
+  ApiStageName:
+    Type: String
+    Default: dev
+    Description: "The API Gateway Stage name (e.g. dev, prod, etc.)"
+  FirehoseS3Prefix:
+    Type: String
+    Default: firehose/
+    Description: "The S3 Key prefix for Kinesis Firehose."
+  FirehoseCompressionFormat:
+    Type: String
+    Default: GZIP
+    AllowedValues: [UNCOMPRESSED, GZIP]
+    Description: "Compression format used by Kinesis Firehose"
+  FirehoseBufferingInterval:
+    Type: Number
+    Default: 60
+    MinValue: 60
+    MaxValue: 900
+    Description: "How long Firehose will wait before writing a new batch into S3"
+  FirehoseBufferingSize:
+    Type: Number
+    Default: 10
+    MinValue: 1
+    MaxValue: 128
+    Description: "Maximum batch size in MB"
+  LambdaTimeout:
+    Type: Number
+    Default: 30
+    MinValue: 5
+    MaxValue: 300
+    Description: "Maximum Lambda execution time in seconds"
+  LambdaMemorySize:
+    Type: String
+    Default: 1024
+    AllowedValues: [128,192,256,320,384,448,512,576,640,704,768,832,896,960,1024,1088,1152,1216,1280,1344,1408,1472,1536]
+  AthenaDatabaseName:
+    Type: String
+    Default: serverless_data_pipeline
+    Description: "The Athena database name"
+  AthenaTableName:
+    Type: String
+    Default: records
+    Description: "The Athena table name"
+
+Resources:
+
+  DeliveryBucket:
+    Type: AWS::S3::Bucket
+
+  StreamProcessFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: handler.lambda_handler
+      Runtime: python2.7
+      Timeout: !Ref LambdaTimeout
+      MemorySize: !Ref LambdaMemorySize
+
+  DeliveryStream:
+    Type: AWS::KinesisFirehose::DeliveryStream
+    DependsOn:
+      - DeliveryStreamPolicy
+    Properties:
+      DeliveryStreamType: DirectPut
+      ExtendedS3DestinationConfiguration:
+        Prefix: !Ref FirehoseS3Prefix
+        BucketARN: !GetAtt DeliveryBucket.Arn
+        BufferingHints:
+          IntervalInSeconds: !Ref FirehoseBufferingInterval
+          SizeInMBs: !Ref FirehoseBufferingSize
+        CompressionFormat: !Ref FirehoseCompressionFormat
+        RoleARN: !GetAtt DeliveryStreamRole.Arn
+        ProcessingConfiguration:
+          Enabled: true
+          Processors:
+            - Type: Lambda
+              Parameters:
+                - ParameterName: LambdaArn
+                  ParameterValue: !GetAtt StreamProcessFunction.Arn
+
+  DeliveryStreamRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Sid: ''
+            Effect: Allow
+            Principal:
+              Service: firehose.amazonaws.com
+            Action: 'sts:AssumeRole'
+            Condition:
+              StringEquals:
+                'sts:ExternalId': !Ref 'AWS::AccountId'
+
+  DeliveryStreamPolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      Roles:
+        - !Ref DeliveryStreamRole
+      PolicyName: firehose_delivery_policy
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Action:
+              - 's3:AbortMultipartUpload'
+              - 's3:GetBucketLocation'
+              - 's3:GetObject'
+              - 's3:ListBucket'
+              - 's3:ListBucketMultipartUploads'
+              - 's3:PutObject'
+            Resource:
+              - !GetAtt DeliveryBucket.Arn
+              - !Join 
+                - ''
+                - - 'arn:aws:s3:::'
+                  - !Ref DeliveryBucket
+                  - '*'
+          - Effect: Allow
+            Action:
+              - 'lambda:InvokeFunction'
+              - 'lambda:GetFunctionConfiguration'
+            Resource:
+              - !GetAtt StreamProcessFunction.Arn
+
+  APIRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Sid: ''
+            Effect: Allow
+            Principal:
+              Service: apigateway.amazonaws.com
+            Action: 'sts:AssumeRole'
+
+  APIPolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      Roles:
+        - !Ref APIRole
+      PolicyName: api_delivery_policy
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Action:
+              - 'firehose:PutRecord*'
+              - 'firehose:List*'
+              - 'firehose:Describe*'
+            Resource:
+              - !GetAtt DeliveryStream.Arn
+
+  DeliveryApi:
+    Type: AWS::Serverless::Api
+    Properties:
+      StageName: !Ref ApiStageName
+      DefinitionBody:
+        swagger: "2.0"
+        info:
+          title: "Serverless Data Pipeline API"
+        schemes: ["https"]
+        paths:
+          /track:
+            post:
+              consumes: ["application/json"]
+              produces: ["application/json"]
+              responses:
+                "200":
+                  description: "200 response"
+                  schema:
+                    $ref: "#/definitions/Empty"
+              x-amazon-apigateway-integration:
+                credentials: !GetAtt APIRole.Arn
+                responses:
+                  default:
+                    statusCode: "200"
+                requestParameters:
+                  integration.request.header.Content-Type: "'x-amz-json-1.1'"
+                uri: !Sub "arn:aws:apigateway:${AWS::Region}:firehose:action/PutRecord"
+                passthroughBehavior: "when_no_templates"
+                httpMethod: "POST"
+                requestTemplates:
+                  application/json: !Sub >
+                    {
+                      "DeliveryStreamName": "${DeliveryStream}",
+                      "Record": {
+                        "Data": "$util.base64Encode($input.json('$'))"
+                      }
+                    }
+                type: "aws"
+            options:
+              consumes: ["application/json"]
+              produces: ["application/json"]
+              responses:
+                "200":
+                  description: "200 response"
+                  schema:
+                    $ref: "#/definitions/Empty"
+                  headers:
+                    Access-Control-Allow-Origin:
+                      type: "string"
+                    Access-Control-Allow-Methods:
+                      type: "string"
+                    Access-Control-Allow-Headers:
+                      type: "string"
+              x-amazon-apigateway-integration:
+                responses:
+                  default:
+                    statusCode: "200"
+                    responseParameters:
+                      method.response.header.Access-Control-Allow-Methods: "'DELETE,GET,HEAD,OPTIONS,PATCH,POST,PUT'"
+                      method.response.header.Access-Control-Allow-Headers: "'Content-Type,Authorization,X-Amz-Date,X-Api-Key,X-Amz-Security-Token'"
+                      method.response.header.Access-Control-Allow-Origin: "'*'"
+                passthroughBehavior: "when_no_match"
+                requestTemplates:
+                  application/json: "{\"statusCode\": 200}"
+                type: "mock"
+        definitions:
+          Empty:
+            type: "object"
+            title: "Empty Schema"
+
+  AthenaCreateDatabaseQuery:
+    Type: AWS::Athena::NamedQuery
+    Properties:
+      Description: Run this query to initialize the Athena database
+      QueryString: !Sub "CREATE DATABASE IF NOT EXISTS `${AthenaDatabaseName}`;"
+      Database: !Ref AthenaDatabaseName
+
+  AthenaCreateTableQuery:
+    Type: AWS::Athena::NamedQuery
+    DependsOn:
+      - DeliveryBucket
+    Properties:
+      Description: Run this query to initialize the Athena table
+      QueryString: !Sub >
+        CREATE EXTERNAL TABLE IF NOT EXISTS `${AthenaDatabaseName}`.`${AthenaTableName}` (
+          `name` string,
+          `action` string,
+          `value` int
+        )
+        ROW FORMAT SERDE 'org.apache.hive.hcatalog.data.JsonSerDe'
+        WITH SERDEPROPERTIES (
+          'serialization.format' = '1'
+        ) LOCATION 's3://${DeliveryBucket}/${FirehoseS3Prefix}'
+        TBLPROPERTIES ('has_encrypted_data'='false');
+      Database: !Ref AthenaDatabaseName
+
+  AthenaSampleQuery:
+    Type: AWS::Athena::NamedQuery
+    DependsOn:
+      - DeliveryBucket
+    Properties:
+      Description: Run this query to initialize the Athena table
+      QueryString: !Sub >
+        SELECT name, action,
+               count(*) as num,
+               sum(value) as total
+        FROM "${AthenaDatabaseName}"."${AthenaTableName}"
+        GROUP BY name, action
+        HAVING avg(value) > 10
+        ORDER BY total DESC;
+      Database: !Ref AthenaDatabaseName
+
+Outputs:
+  TrackURL:
+    Description: URL of your API endpoint
+    Value: !Join
+      - ''
+      - - https://
+        - !Ref DeliveryApi
+        - '.execute-api.'
+        - !Ref 'AWS::Region'
+        - '.amazonaws.com/'
+        - !Ref ApiStageName
+        - '/track'
+  BucketName:
+    Description: The bucket where data will be stored
+    Value: !Ref DeliveryBucket
+  FunctionName:
+    Description: The Lambda Function that will process Firehose records
+    Value: !Ref StreamProcessFunction
