@@ -34,9 +34,9 @@ This stack will create the following resources:
 
 ## Gotchas
 
-* The architecture is 100% serverless (no hourly costs, no serveres to manage)
-* The API endpoint is publicly accessible (e.g. any browser or anonymous website user can potentially submit new records/events)
-* Data is not serverside-encrypted on S3, but you can customize the template to make sure Kinesis Firhose will take care of that as well
-* You can configure Kinesis Firehose's buffering (see Parameters below)
-* Athena's Named Queries cannot be updated (deployments will fail, unless you create a new Query with a different logical name)
+* The architecture is 100% serverless (no hourly costs, no servers to manage)
+* The API Gateway endpoint is publicly accessible (i.e. any browser or anonymous website user can potentially submit new records/events)
+* You can customize the template to enable encryption at rest for Kinesis Firehose
+* You can configure Kinesis Firehose's buffering (see Parameters above)
+* Athena's Named Queries cannot be updated (you need to create a new query with a different logical name)
 * Make sure the S3 bucket is empty when you delete the stack
