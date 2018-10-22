@@ -1,5 +1,19 @@
-# Serverless Data Pipeline - SAM Template
-Serverless Data Pipeline powered by Kinesis Firehose, API Gateway, Lambda, S3, and Athena.
+# Serverless Data Pipeline - Powered by AWS SAM
+Serverless Data Pipeline build with Amazon API Gateway, AWS Lambda, Amazon Kinesis Firehose, Amazon S3, and Amazon Athena.
+
+## How to deploy the stack 
+
+See `scripts/deploy.sh` (customize your deployment bucket and stack name).
+
+## How to ingest new records via API
+
+See `scripts/track.sh` (customize your stack name).
+
+## What kind of queries can I run on the dataset?
+
+That depends on the data that you collect and on the virtual tables that you define on Athena and Glue.
+
+The file `queries.sql` contains a few sample queries that you can run with the default schema (e.g. `{"name": "John", "action": "charge", "value": 100}`).
 
 ## Resources list
 
