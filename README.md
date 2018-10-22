@@ -11,7 +11,7 @@ See `scripts/track.sh` (customize your stack name).
 
 ## What kind of queries can I run on the dataset?
 
-That depends on the data that you collect and on the virtual tables that you define on Athena and Glue.
+It depends on the data that you collect and on the virtual tables that you define on Athena and Glue.
 
 The file `queries.sql` contains a few sample queries that you can run with the default schema (e.g. `{"name": "John", "action": "charge", "value": 100}`).
 
@@ -43,8 +43,8 @@ This stack will create the following resources:
 ## Outputs
 
 * **TrackURL**: The public URL to submit new records
-* **BucketName**: The bucket where data will be stored
-* **FunctionName**: The Lambda Function that will process Firehose records
+* **BucketName**: The bucket that will store your data
+* **FunctionName**: The Lambda Function that will process/validate records
 
 ## Gotchas
 
